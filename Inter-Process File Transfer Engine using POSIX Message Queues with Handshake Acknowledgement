@@ -1,0 +1,149 @@
+Producer:
+
+#include "common.h"
+
+int main(int argc, char *argv[]) {
+    if (argc != 2) {
+        fprintf(stderr, "[PRODUCER ERROR] Usage: %s <source_file>\n", argv);
+        return EXIT_FAILURE;
+    }
+
+    FILE *infile = fopen(argv[1], "rb");
+    if (!infile) {
+        perror("[PRODUCER ERROR] Failed to open input file");
+        return EXIT_FAILURE;
+    }
+
+    struct mq_attr attr;
+    attr.mq_flags = 0;
+    attr.mq_maxmsg = 10;
+    attr.mq_msgsize = sizeof(Message);
+    attr.mq_curmsgs = 0;
+
+    struct mq_attr ack_attr;
+    ack_attr.mq_flags = 0;
+    ack_attr.mq_maxmsg = 5;
+    ack_attr.mq_msgsize = sizeof(AckMessage);
+    ack_attr.mq_curmsgs = 0;
+
+    mqd_t data_mq = mq_open(DATA_QUEUE_NAME, O_CREAT | O_WRONLY, 0666, &attr);
+    mqd_t ack_mq = mq_open(ACK_QUEUE_NAME, O_CREAT | O_RDONLY, 0666, &ack_attr);
+
+    if (data_mq == (mqd_t)-1 || ack_mq == (mqd_t)-1) {
+        perror("[PRODUCER ERROR] Failed to initialize message queues");
+        if (infile) fclose(infile);
+        return EXIT_FAILURE;
+    }
+
+
+    Message msg;
+    int processing = 1;
+
+    while (processing) {
+        msg.bytes_read = fread(msg.data, 1, CHUNK_SIZE, infile);
+        msg.is_eof = 0;
+
+        if (ferror(infile)) {
+            fprintf(stderr, "[PRODUCER ERROR] Intermittent file read error.\n");
+            break;
+        }
+
+        if (feof(infile)) {
+            msg.is_eof = 1;
+            processing = 0;
+        }
+
+        if (mq_send(data_mq, (const char *)&msg, sizeof(Message), 0) == -1) {
+            perror("[PRODUCER ERROR] mq_send failed");
+            break;
+        }
+    }
+
+    fclose(infile);
+    mq_close(data_mq);
+
+    printf("[PRODUCER] Data transmission complete. Waiting for consumer acknowledgement...\n");
+
+    // --- BLOCKED WAITING STEP ---
+    // The producer stops right here and waits until the consumer posts a completion message
+    AckMessage ack;
+    ssize_t ack_bytes = mq_receive(ack_mq, (char *)&ack, sizeof(AckMessage), NULL);
+
+    if (ack_bytes != -1 && ack.status == 1) {
+        printf("[PRODUCER] Consumer confirmed successful file write. Exiting safely!\n");
+    } else {
+        fprintf(stderr, "[PRODUCER WARNING] Exited wait lock but consumer signal was invalid or missing.\n");
+    }
+
+    mq_close(ack_mq);
+    return EXIT_SUCCESS;
+}
+
+Consumer:
+
+#include "common.h"
+
+int main(int argc, char *argv[]) {
+    if (argc != 2) {
+        fprintf(stderr, "[CONSUMER ERROR] Usage: %s <destination_file>\n", argv);
+        return EXIT_FAILURE;
+    }
+
+    FILE *outfile = fopen(argv[1], "wb");
+    if (!outfile) {
+        perror("[CONSUMER ERROR] Failed to open destination file");
+        return EXIT_FAILURE;
+    }
+
+    mqd_t data_mq = mq_open(DATA_QUEUE_NAME, O_RDONLY);
+    mqd_t ack_mq = mq_open(ACK_QUEUE_NAME, O_WRONLY);
+
+    if (data_mq == (mqd_t)-1 || ack_mq == (mqd_t)-1) {
+        perror("[CONSUMER ERROR] Link to message queues failed. Run producer first.");
+        fclose(outfile);
+        return EXIT_FAILURE;
+    }
+
+    printf("[CONSUMER] Actively writing incoming chunks to file...\n");
+
+    Message msg;
+    int processing = 1;
+    int final_status = 1; // 1 means okay, changes to 0 if filesystem faults occur
+
+    while (processing) {
+        ssize_t bytes_received = mq_receive(data_mq, (char *)&msg, sizeof(Message), NULL);
+        if (bytes_received == -1) {
+            perror("[CONSUMER ERROR] mq_receive failed");
+            final_status = 0;
+            break;
+        }
+
+        if (msg.bytes_read > 0) {
+            size_t written = fwrite(msg.data, 1, msg.bytes_read, outfile);
+            if (written < msg.bytes_read) {
+                fprintf(stderr, "[CONSUMER ERROR] File system write error.\n");
+                final_status = 0;
+                break;
+            }
+        }
+
+        if (msg.is_eof) {
+            processing = 0;
+            printf("[CONSUMER] File payload processing complete.\n");
+        }
+    }
+
+    fclose(outfile);
+    mq_close(data_mq);
+
+    AckMessage ack;
+    ack.status = final_status;
+    mq_send(ack_mq, (const char *)&ack, sizeof(AckMessage), 0);
+
+    mq_close(ack_mq);
+    mq_unlink(DATA_QUEUE_NAME);
+    mq_unlink(ACK_QUEUE_NAME);
+
+    printf("[CONSUMER] Pipeline cleared down completely.\n");
+    return EXIT_SUCCESS;
+}
