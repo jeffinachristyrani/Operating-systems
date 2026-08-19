@@ -1,0 +1,162 @@
+Producer:
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+#define MAX_MSG_SIZE 256
+#define QUEUE_CAPACITY 5
+
+struct shared_queue {
+    char messages[QUEUE_CAPACITY][MAX_MSG_SIZE];
+    int head;
+    int tail;
+    int count;
+    int is_done;
+};
+
+int main() {
+    key_t key = ftok(".", 'q');
+    if (key == -1) {
+        perror("ftok failed");
+        return 1;
+    }
+
+    int shmid = shmget(key, sizeof(struct shared_queue), IPC_CREAT | 0666);
+    if (shmid == -1) {
+        perror("shmget failed");
+        return 1;
+    }
+
+    struct shared_queue *q = (struct shared_queue *)shmat(shmid, NULL, 0);
+    if (q == (void *)-1) {
+        perror("shmat failed");
+        return 1;
+    }
+
+    q->head = 0;
+    q->tail = 0;
+    q->count = 0;
+    q->is_done = 0;
+
+    printf("[Producer Window] Shared queue initialized.\n");
+    printf("Type messages below. Type 'exit' to stop the program.\n\n");
+
+    while (1) {
+        char input[MAX_MSG_SIZE];
+        printf("Enter message: ");
+        fgets(input, MAX_MSG_SIZE, stdin);
+
+        input[strcspn(input, "\n")] = '\0';
+
+        if (strcmp(input, "exit") == 0) {
+            break;
+        }
+
+        while (q->count == QUEUE_CAPACITY) {
+            usleep(10000);
+        }
+
+        strncpy(q->messages[q->tail], input, MAX_MSG_SIZE);
+        q->tail = (q->tail + 1) % QUEUE_CAPACITY;
+        q->count++;
+    }
+
+    q->is_done = 1;
+    printf("\nExiting producer. Waiting for consumer to finish processing...\n");
+
+    while (q->count > 0) {
+        usleep(50000);
+    }
+
+    shmdt(q);
+    shmctl(shmid, IPC_RMID, NULL);
+    printf("Shared memory cleared. Goodbye!\n");
+
+    return 0;
+}
+
+Consumer:
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <ctype.h>
+
+#define MAX_MSG_SIZE 256
+#define QUEUE_CAPACITY 5
+
+struct shared_queue {
+    char messages[QUEUE_CAPACITY][MAX_MSG_SIZE];
+    int head;
+    int tail;
+    int count;
+    int is_done;
+};
+
+int count_words(const char *str) {
+    int count = 0;
+    int in_word = 0;
+    while (*str) {
+        if (isspace((unsigned char)*str)) {
+            in_word = 0;
+        } else if (!in_word) {
+            in_word = 1;
+            count++;
+        }
+        str++;
+    }
+    return count;
+}
+
+int main() {
+    key_t key = ftok(".", 'q');
+    if (key == -1) {
+        perror("ftok failed");
+        return 1;
+    }
+
+    int shmid = shmget(key, sizeof(struct shared_queue), 0666);
+    if (shmid == -1) {
+        printf("[Consumer Window] Waiting for Producer to create the shared memory... Run producer first.\n");
+        return 1;
+    }
+
+    struct shared_queue *q = (struct shared_queue *)shmat(shmid, NULL, 0);
+    if (q == (void *)-1) {
+        perror("shmat failed");
+        return 1;
+    }
+
+    printf("[Consumer Window] Connected to shared memory queue. Waiting for messages...\n\n");
+
+    while (1) {
+        if (q->count == 0) {
+            if (q->is_done) {
+                break;
+            }
+            usleep(10000);
+            continue;
+        }
+
+        char local_msg[MAX_MSG_SIZE];
+        strncpy(local_msg, q->messages[q->head], MAX_MSG_SIZE);
+        q->head = (q->head + 1) % QUEUE_CAPACITY;
+        q->count--;
+
+        int words = count_words(local_msg);
+        printf("Received: \"%s\" -> Word Count: %d\n", local_msg, words);
+    }
+
+    printf("\nProducer has closed connection. Exiting consumer.\n");
+    shmdt(q);
+    return 0;
+}
