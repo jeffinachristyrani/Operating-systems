@@ -1,0 +1,206 @@
+#include "pr1.h"
+#include <float.h> // Needed for FLT_MAX
+
+// Define the global variables declared in the header
+int i, j;
+
+void fcfs(int *process1st, float *bursttime, float *arrivaltime, int n) {
+    float current_time = 0;
+    float total_wt = 0, total_tat = 0;
+
+    // FIX: Allocated using sizeof(float) instead of sizeof(int)
+    float *wt = (float *)malloc(n * sizeof(float));
+    float *tat = (float *)malloc(n * sizeof(float));
+
+    for (i = 0; i < n; i++) {
+        if (current_time < arrivaltime[i]) {
+            current_time = arrivaltime[i];
+        }
+        wt[i] = current_time - arrivaltime[i];
+        tat[i] = wt[i] + bursttime[i];
+        current_time += bursttime[i];
+        total_wt += wt[i];
+        total_tat += tat[i];
+    }
+
+    printf("\nFCFS Scheduling\nPID\tAT\tBT\tWT\tTAT\n");
+    for (i = 0; i < n; i++)
+        // FIX: Changed first specifier to %d for process1st (int)
+        printf("%d\t%.2f\t%.2f\t%.2f\t%.2f\n", process1st[i], arrivaltime[i], bursttime[i], wt[i], tat[i]);
+
+    printf("Average Waiting Time: %.2f\n", total_wt / n);
+    printf("Average Turnaround Time: %.2f\n", total_tat / n);
+
+    free(wt);
+    free(tat);
+}
+
+void sjf(int *process1st, float *bursttime, float *arrivaltime, int n) {
+    int completed = 0;
+    float current_time = 0, total_wt = 0, total_tat = 0;
+
+    int *is_completed = (int *)calloc(n, sizeof(int));
+    // FIX: Allocated using sizeof(float)
+    float *wt = (float *)malloc(n * sizeof(float));
+    float *tat = (float *)malloc(n * sizeof(float));
+
+    while (completed < n) {
+        int idx = -1;
+        float min_bt = FLT_MAX; // FIX: Replaced 9999 with FLT_MAX
+
+        for (i = 0; i < n; i++) {
+            if (arrivaltime[i] <= current_time && !is_completed[i] && bursttime[i] < min_bt) {
+                min_bt = bursttime[i];
+                idx = i;
+            }
+        }
+        if (idx == -1) {
+            current_time++;
+        } else {
+            wt[idx] = current_time - arrivaltime[idx];
+            tat[idx] = wt[idx] + bursttime[idx];
+            current_time += bursttime[idx];
+            total_wt += wt[idx];
+            total_tat += tat[idx];
+            is_completed[idx] = 1;
+            completed++;
+        }
+    }
+
+    printf("\nSJF (Non-Preemptive) Scheduling\nPID\tAT\tBT\tWT\tTAT\n");
+    for (i = 0; i < n; i++)
+        // FIX: Changed first specifier to %d for process1st
+        printf("%d\t%.2f\t%.2f\t%.2f\t%.2f\n", process1st[i], arrivaltime[i], bursttime[i], wt[i], tat[i]);
+
+    printf("Average Waiting Time: %.2f\n", total_wt / n);
+    printf("Average Turnaround Time: %.2f\n", total_tat / n);
+
+    free(is_completed);
+    free(wt);
+    free(tat);
+}
+
+void srtf(int *process1st, float *bursttime, float *arrivaltime, int n) {
+    int completed = 0, i;
+    float current_time = 0, total_wt = 0, total_tat = 0;
+
+    // Allocate memory for tracking arrays
+    float *rt = (float *)malloc(n * sizeof(float));
+    float *wt = (float *)malloc(n * sizeof(float));
+    float *tat = (float *)malloc(n * sizeof(float));
+
+    // Initialize remaining times
+    for (i = 0; i < n; i++) {
+        rt[i] = bursttime[i];
+    }
+
+    while (completed < n) {
+        int idx = -1;
+        float min_rt = FLT_MAX;
+
+        // Find the process with the shortest remaining time among arrived processes
+        for (i = 0; i < n; i++) {
+            if (arrivaltime[i] <= current_time && rt[i] > 0.0001 && rt[i] < min_rt) {
+                min_rt = rt[i];
+                idx = i;
+            }
+        }
+
+        if (idx == -1) {
+            // CPU is idle; jump efficiently to the next process arrival time
+            float next_arrival = FLT_MAX;
+            for (i = 0; i < n; i++) {
+                if (arrivaltime[i] > current_time && arrivaltime[i] < next_arrival) {
+                    next_arrival = arrivaltime[i];
+                }
+            }
+            // If no more processes are arriving, step forward by 1, else jump to next arrival
+            current_time = (next_arrival == FLT_MAX) ? current_time + 1 : next_arrival;
+        } else {
+            // Determine time step safely to handle any floating-point precision fractions
+            float time_step = (rt[idx] < 1.0) ? rt[idx] : 1.0;
+
+            rt[idx] -= time_step;
+            current_time += time_step;
+
+            // Safe close-to-zero validation check
+            if (rt[idx] <= 0.0001) {
+                completed++;
+                tat[idx] = current_time - arrivaltime[idx];
+                wt[idx] = tat[idx] - bursttime[idx];
+
+                // Prevent negative waiting time from small floating-point rounding anomalies
+                if (wt[idx] < 0) wt[idx] = 0;
+
+                total_wt += wt[idx];
+                total_tat += tat[idx];
+            }
+        }
+    }
+
+    // Print results table
+    printf("\nSRTF (Preemptive) Scheduling\nPID\tAT\tBT\tWT\tTAT\n");
+    for (i = 0; i < n; i++){
+        printf("%d\t%.2f\t%.2f\t%.2f\t%.2f\n", process1st[i], arrivaltime[i], bursttime[i], wt[i], tat[i]);
+    }
+    printf("Average Waiting Time: %.2f\n", total_wt / n);
+    printf("Average Turnaround Time: %.2f\n", total_tat / n);
+
+    // Clean up allocated memory
+    free(rt);
+    free(wt);
+    free(tat);
+}
+
+[24bcs141@mepcolinux ex3]$cat app.c
+#include "pr1.h"
+
+int main() {
+    int n;
+    printf("Enter the number of processes: ");
+    scanf("%d", &n);
+    if (n <= 0) {
+        return 1;
+    }
+
+    int *process = (int *)malloc(n * sizeof(int));
+    float *burst = (float *)malloc(n * sizeof(int));
+    float *arrival = (float *)malloc(n * sizeof(int));
+
+    for (i = 0; i < n; i++) {
+        process[i] = i + 1;
+        printf("For process %d\n", process[i]);
+        printf("Arrival time: ");
+        scanf("%f", &arrival[i]);
+        printf("Burst time: ");
+        scanf("%f", &burst[i]);
+    }
+
+    int choice = 0;
+    while (choice != 4) {
+        printf("\nMENU: \n1. FCFS\n2. SJF\n3. SRTF\n4. Exit\nEnter your choice: ");
+        scanf("%d", &choice);
+
+        switch (choice) {
+            case 1:
+                fcfs(process, burst, arrival, n);
+                break;
+            case 2:
+                sjf(process, burst, arrival, n);
+                break;
+            case 3:
+                srtf(process, burst, arrival, n);
+                break;
+            case 4:
+                printf("Exiting.\n");
+                break;
+            default:
+                printf("INVALID CHOICE.\n");
+        }
+    }
+
+    free(process);
+    free(burst);
+    free(arrival);
+    return 0;
+}
