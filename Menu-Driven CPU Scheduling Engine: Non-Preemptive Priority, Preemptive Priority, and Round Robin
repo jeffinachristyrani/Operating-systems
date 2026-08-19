@@ -1,0 +1,251 @@
+Implementation file:
+
+#include"pr2.h"
+void prioritySchedule(int *process1st, float *bursttime, float *arrivaltime, float *priority, int n) {
+    int completed = 0, current_time = 0, total_wt = 0, total_tat = 0;
+    int *is_completed = (int *)calloc(n, sizeof(int));
+    float *wt = (float *)malloc(n * sizeof(float));
+    float *tat = (float *)malloc(n * sizeof(float));
+
+    while (completed < n) {
+        int idx = -1;
+        float highest_pr = FLT_MAX;
+        for (i = 0; i < n; i++) {
+            if (arrivaltime[i] <= current_time && !is_completed[i] && priority[i] < highest_pr) {
+                highest_pr = priority[i];
+                idx = i;
+            }
+        }
+        if (idx == -1) {
+            current_time++;
+        } else {
+            wt[idx] = current_time - arrivaltime[idx];
+            tat[idx] = wt[idx] + bursttime[idx];
+            current_time += bursttime[idx];
+            total_wt += wt[idx];
+            total_tat += tat[idx];
+            is_completed[idx] = 1;
+            completed++;
+        }
+    }
+
+    printf("\n--- Priority Scheduling ---\nPID\tAT\tBT\tPR\tWT\tTAT\n");
+    for (i = 0; i < n; i++)
+        printf("%d\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\n", process1st[i], arrivaltime[i], bursttime[i], priority[i], wt[i], tat[i]);
+
+    printf("Average Waiting Time: %.2f\n", (float)total_wt / n);
+    printf("Average Turnaround Time: %.2f\n", (float)total_tat / n);
+
+    free(is_completed);
+    free(wt);
+    free(tat);
+}
+
+void roundRobin(int *process1st, float *bursttime, float *arrivaltime, int timequantum, int n) {
+    int current_time = 0, completed = 0, i;
+    float total_wt = 0, total_tat = 0;
+    float *rt = (float *)malloc(n * sizeof(float));
+    float *wt = (float *)malloc(n * sizeof(float));
+    float *tat = (float *)malloc(n * sizeof(float));
+    int *queue = (int *)malloc(2 * n * sizeof(int));
+    int *in_queue = (int *)calloc(n, sizeof(int));
+    int front = 0, rear = 0;
+    for (i = 0; i < n; i++) {
+        rt[i] = bursttime[i];
+    }
+    int min_arrival_idx = 0;
+    for (i = 1; i < n; i++) {
+        if (arrivaltime[i] < arrivaltime[min_arrival_idx]) {
+            min_arrival_idx = i;
+        }
+    }
+
+    if (arrivaltime[min_arrival_idx] > 0) {
+        current_time = arrivaltime[min_arrival_idx];
+    }
+    for (i = 0; i < n; i++) {
+        if (arrivaltime[i] <= current_time) {
+            queue[rear++] = i;
+            in_queue[i] = 1;
+        }
+    }
+    while (completed < n) {
+        if (front == rear) {
+            int next_arrival = -1;
+            for (i = 0; i < n; i++) {
+                if (rt[i] > 0) {
+                    if (next_arrival == -1 || arrivaltime[i] < arrivaltime[next_arrival]) {
+                        next_arrival = i;
+                    }
+                }
+            }
+            if (next_arrival != -1 && arrivaltime[next_arrival] > current_time) {
+                current_time = arrivaltime[next_arrival];
+            }
+            for (i = 0; i < n; i++) {
+                if (arrivaltime[i] <= current_time && rt[i] > 0 && !in_queue[i]) {
+                    queue[rear++] = i;
+                    in_queue[i] = 1;
+                }
+            }
+        }
+        int idx = queue[front++];
+
+        if (rt[idx] > timequantum) {
+            current_time += timequantum;
+            rt[idx] -= timequantum;
+        } else {
+            current_time += rt[idx];
+            rt[idx] = 0;
+            completed++;
+            tat[idx] = current_time - arrivaltime[idx];
+            wt[idx] = tat[idx] - bursttime[idx];
+            total_wt += wt[idx];
+            total_tat += tat[idx];
+        }
+        for (i = 0; i < n; i++) {
+            if (arrivaltime[i] <= current_time && rt[i] > 0 && !in_queue[i] && i != idx) {
+                queue[rear++] = i;
+                in_queue[i] = 1;
+            }
+        }
+        if (rt[idx] > 0) {
+            queue[rear++] = idx;
+        }
+    }
+    printf("\n--- Round Robin (Quantum = %d) ---\nPID\tAT\tBT\tWT\tTAT\n", timequantum);
+    for (i = 0; i < n; i++) {
+        printf("%d\t%.2f\t%.2f\t%.2f\t%.2f\n", process1st[i], arrivaltime[i], bursttime[i], wt[i], tat[i]);
+    }
+    printf("Average Waiting Time: %.2f\n", total_wt / n);
+    printf("Average Turnaround Time: %.2f\n", total_tat / n);
+    free(rt);
+    free(wt);
+    free(tat);
+    free(queue);
+    free(in_queue);
+}
+
+
+
+void prioritypreemp(int *process1st, float *bursttime, float *arrivaltime, float *priority, int n) {
+    int completed = 0, current_time = 0, i;
+    float total_wt = 0, total_tat = 0;
+    float *rt = (float *)malloc(n * sizeof(float));
+    float *wt = (float *)malloc(n * sizeof(float));
+    float *tat = (float *)malloc(n * sizeof(float));
+    int *is_completed = (int *)calloc(n, sizeof(int));
+    for (i = 0; i < n; i++) {
+        rt[i] = bursttime[i];
+    }
+    while (completed < n) {
+        int idx = -1;
+        float highest_pr = FLT_MAX;
+        for (i = 0; i < n; i++) {
+            if (arrivaltime[i] <= current_time && !is_completed[i]) {
+                if (priority[i] < highest_pr) {
+                    highest_pr = priority[i];
+                    idx = i;
+                } else if (priority[i] == highest_pr && idx != -1) {
+                    if (arrivaltime[i] < arrivaltime[idx]) {
+                        idx = i;
+                    }
+                }
+            }
+        }
+        if (idx == -1) {
+            current_time++;
+        } else {
+            rt[idx]--;
+            current_time++;
+            if (rt[idx] == 0) {
+                is_completed[idx] = 1;
+                completed++;
+                tat[idx] = current_time - arrivaltime[idx];
+                wt[idx] = tat[idx] - bursttime[idx];
+                total_wt += wt[idx];
+                total_tat += tat[idx];
+            }
+        }
+    }
+    printf("\n--- Preemptive Priority Scheduling ---\nPID\tAT\tBT\tPR\tWT\tTAT\n");
+    for (i = 0; i < n; i++) {
+        printf("%d\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\n", process1st[i], arrivaltime[i], bursttime[i], priority[i], wt[i], tat[i]);
+    }
+    printf("Average Waiting Time: %.2f\n", total_wt / n);
+    printf("Average Turnaround Time: %.2f\n", total_tat / n);
+    free(rt);
+    free(wt);
+    free(tat);
+    free(is_completed);
+}
+
+Application file:
+
+#include"pr2.h"
+int main() {
+    int n, quantum;
+
+    printf("Enter number of processes: ");
+    if (scanf("%d", &n) != 1 || n <= 0) return 1;
+
+    int *process  = (int *)malloc(n * sizeof(int));
+    float *burst    = (float *)malloc(n * sizeof(float));
+    float *arrival  = (float *)malloc(n * sizeof(float));
+    float *priority = (float *)malloc(n * sizeof(float));
+
+    for (i = 0; i < n; i++) {
+        process[i] = i + 1;
+        printf("\nFor Process %d:\n", process[i]);
+        printf("  Arrival Time: ");
+        scanf("%f", &arrival[i]);
+        printf("  Burst Time: ");
+        scanf("%f", &burst[i]);
+        printf("  Priority (lower number = higher priority): ");
+        scanf("%f", &priority[i]);
+    }
+
+    printf("\nEnter Time Quantum for Round Robin: ");
+    scanf("%d", &quantum);
+    int choice;
+    printf("MENU:\n1. Priority scheduling\n2. Round Robin\n3. Priority scheduling (Pre emptive)\n\n");
+    while(choice!=4){
+       printf("Enter your choice: ");
+       scanf("%d",&choice);
+       switch(choice){
+          case 1:
+             prioritySchedule(process, burst, arrival, priority, n);
+             break;
+          case 2:
+             roundRobin(process, burst, arrival, quantum, n);
+             break;
+          case 3:
+             prioritypreemp(process,burst,arrival,priority,n);
+             break;
+          case 4:
+             printf("Exiting...\n");
+             break;
+          default:
+             printf("Invalid choice. Try again.\n");
+             break;
+       }
+    }
+
+    free(process);
+    free(burst);
+    free(arrival);
+    free(priority);
+
+    return 0;
+}
+
+
+Header:
+#include<stdio.h>
+#include<stdlib.h>
+#include<limits.h>
+#include<float.h>
+int i,j;
+void roundRobin(int *process1st, float *bursttime, float *arrivaltime, int timequantum, int n);
+void prioritySchedule(int *process1st, float *bursttime, float *arrivaltime, float *priority, int n);
+void prioritypreemp(int *process1st, float *bursttime, float *arrivaltime, float *priority, int n);
