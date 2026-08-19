@@ -1,0 +1,116 @@
+Producer:
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+#define SHM_SIZE 1024
+
+struct shared_data {
+    int status;
+    char text[SHM_SIZE];
+};
+
+int main() {
+    key_t key = ftok(".", 'x');
+    if (key == -1) {
+        perror("ftok failed");
+        return 1;
+    }
+
+    int shmid = shmget(key, sizeof(struct shared_data), IPC_CREAT | 0666);
+    if (shmid == -1) {
+        perror("shmget failed");
+        return 1;
+    }
+
+    struct shared_data *shm = (struct shared_data *)shmat(shmid, NULL, 0);
+    if (shm == (void *)-1) {
+        perror("shmat failed in producer");
+        return 1;
+    }
+
+    shm->status = 0;
+
+    printf("Enter a string: ");
+    fgets(shm->text, SHM_SIZE, stdin);
+
+    shm->text[strcspn(shm->text, "\n")] = '\0';
+
+    shm->status = 1;
+
+    while (shm->status != 2) {
+        usleep(10000);
+    }
+
+    shmdt(shm);
+    shmctl(shmid, IPC_RMID, NULL);
+
+    return 0;
+}
+
+Consumer:
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <ctype.h>
+
+#define SHM_SIZE 1024
+
+struct shared_data {
+    int status;
+    char text[SHM_SIZE];
+};
+
+int count_vowels(const char *str) {
+    int count = 0;
+    while (*str) {
+        char ch = tolower((unsigned char)*str);
+        if (ch == 'a' || ch == 'e' || ch == 'i' || ch == 'o' || ch == 'u') {
+            count++;
+        }
+        str++;
+    }
+    return count;
+}
+
+int main() {
+    key_t key = ftok(".", 'x');
+    if (key == -1) {
+        perror("ftok failed");
+        return 1;
+    }
+
+    int shmid = shmget(key, sizeof(struct shared_data), 0666);
+    if (shmid == -1) {
+        return 1;
+    }
+
+    struct shared_data *shm = (struct shared_data *)shmat(shmid, NULL, 0);
+    if (shm == (void *)-1) {
+        perror("shmat failed in consumer");
+        return 1;
+    }
+
+    while (shm->status != 1) {
+        usleep(10000);
+    }
+
+    int vowels = count_vowels(shm->text);
+    printf("Read string from shared memory: \"%s\"\n", shm->text);
+    printf("Number of vowels: %d\n", vowels);
+
+    shm->status = 2;
+
+    shmdt(shm);
+    return 0;
+}
